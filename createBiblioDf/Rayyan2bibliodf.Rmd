@@ -1,0 +1,103 @@
+# R Script for creating a bibliometric dataframe using bibliometrix from WoS and Scopus and selecting only articles included in the Rayyan screening.
+
+# Loading packages
+
+```{r}
+library(pacman)
+p_load(
+  tidyverse,
+  bibliometrix,
+  psych,
+  stringr
+)
+```
+
+# Reading data
+
+```{r}
+# Reading the selected articles from Rayyan, imported as CSV.
+data <- read.csv(file = "Rayyan_export.csv")
+
+# Reading the datasets with all bibliographic data, exported from Scopus and WoS.
+# These will be read into a standartized dataframe using bibliometrix, in order to use other bibliometric functions.
+
+
+scopus <- bibliometrix::convert2df(file = "scopus_metadata.csv", format = "csv", dbsource = "scopus")
+wos <- bibliometrix::convert2df(file = "WoS_metadata.txt", format = "plaintext", dbsource = "wos")
+
+# I repurpose the C1 field to retain information about the data source.
+wos$C1 <- "wos"
+scopus$C1 <- "scopus"
+
+# Scopus has made changes in the export function. Now it allows exporting 20,000 articles. However, they have also changed the title column tag. Bibliometrix cannot handle it, so I manually adjust it.
+scopus_colnames <- colnames(scopus)
+scopus_colnames[4] <- "TI"
+
+colnames(scopus) <- scopus_colnames
+
+
+# The mergeDbSources function merges scopus and wos bibliodfs into one. It's basically a bindrows with only matching columns kept.
+# However, the result still has the bibliometrix export namespace.
+data_merged <- mergeDbSources(scopus, wos, remove.duplicated = FALSE)
+
+
+```
+
+# Selecting data
+The purpose of this section is to filter the  merged bibliometrixdf, so that only our included articles are in it.
+Furthermore we always use the information from WoS in case of data being available from both WoS and Scopus, as the entries are more standardized. 
+
+```{r}
+# Creating an index for each column in the merged bibliodf. 0 = not included. 1 = included by us.
+
+index <- c()
+
+for (i in 1:nrow(data_merged)) {
+  
+  if ((data_merged$TI[i] == data$title %>% toupper()) %>% any()) {
+    index <- append(index, 1)
+  } else {
+    index <- append(index, 0)
+  }
+}
+
+which(index == 1) %>% length()
+# ~500 articles have an index of 1, but only ~400 articles are included by us. Therefore, we need to remove duplicates.
+
+# A new dataset, only containing included articles with some duplicates
+data_selected <- data_merged[which(index == 1),]
+
+
+# Loop for removing duplicates: For each included title by us, copy the entry from the bibliometrixdf into a new bibliometrixdf.
+# If there are >1 entries in the original bibliometrixdf that match, only write the entry with the "WoS" tag into the new frame.
+# If there are >1 matches and none with the "WoS" tag, simply write the first entry into the new frame.
+
+data_selected_deduped <- data.frame()
+ids <- c()
+for (i in 1:nrow(data)) {
+ 
+  ids <-  which(data$title[i] %>% toupper() == data_merged$TI)
+
+
+  if (length(ids) > 1) {
+  
+    if (any(data_merged[ids, "C1"] == "wos")) {
+    
+      which_wos <- which(data_merged[ids, "C1"] == "wos")
+      data_selected_deduped <- rbind(data_selected_deduped, data_merged[ids[which_wos[1]],])
+      print(which_wos)
+    } else
+  
+    data_selected_deduped <- rbind(data_selected_deduped, data_merged[ids[1],])
+  } else {
+    data_selected_deduped <- rbind(data_selected_deduped, data_merged[ids[1],])
+  }
+
+}
+
+# Success! Our deduplicated detailed bibliodf contains all the articles we included.
+nrow(data_selected_deduped) == nrow(data)
+
+# Saving the results.
+# save(data_selected_deduped, file = "merged_bibliodf.Rdata")
+```
