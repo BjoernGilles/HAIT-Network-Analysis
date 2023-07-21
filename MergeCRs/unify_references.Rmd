@@ -50,7 +50,7 @@ data2 <- data[c(ids_wos[1:4],ids_scopus[1:4]),]
 
 Information is extracted from WoS and Scopus entries using regular expression and merged into a new format.
 
-To create a common format the necessary information is based on the content of Web of Science cited references. These include: year, first author, journal (abbreviated), volume, and starting page. If I want to merge Scopus and Web of Science (WoS), the new format can only contain these maximum information because otherwise, WoS CRs would not be transferrable. However, I exclude the journals because they can not easily be matched. The other information should be sufficient in our sample to generate fingerprints.
+To create a common format the necessary information is based on the content of Web of Science cited references. These include: year, first author, journal (abbreviated), volume, and starting page. If I want to merge Scopus and Web of Science (WoS), the new format can only contain this information because otherwise, WoS CRs would not be transferable. However, I exclude the journals because they can not easily be matched. The other information should be sufficient in our sample to generate fingerprints.
 
 ```{r}
 
@@ -269,7 +269,7 @@ if(as.numeric(volume_number)>2023){
 
 
 ##Page
-# Each content record that has a field starting with "P" and numbers contains a starting_page.
+# Each content record that has a field starting with "P" is followed by numbers contains a starting_page.
 # It is stored as starting_page.
 if(any(grepl(split_content,pattern = "^P\\d+"))){
 page_id <- min(grep(split_content,pattern = "^P\\d+"))
@@ -287,8 +287,8 @@ return(trimws(c(year,volume,starting_page,author)))
 
 ```
 # Looping thorugh the data, unsing the defined functions to extract information.
-## If Volume and Page are missing the entrie is skipped.
-## The same apllies if the publication Year is missing.
+## If volume and page are missing the entry is skipped.
+## The same apllies if the publication year is missing.
 
 ```{r}
 # Create a new, empty column for the new references.
