@@ -1,0 +1,432 @@
+# Script for standardizing the Cited References from Scopus and WoS into a new format.
+
+## Load Packages
+```{r}
+library(pacman)
+p_load(
+  tidyverse,
+  bibliometrix,
+  psych,
+  stringr,
+  reshape2
+)
+```
+
+## Read Data
+```{r}
+load("merged_bibliodf.Rdata")
+
+data <- data_selected_deduped
+data_selected_deduped <- NULL
+```
+
+# Determine Basic Metrics
+```{r}
+data$C1 %>% table()
+# There are almost equal numbers of articles from WoS and Scopus. Formatting is therefore extremely important.
+
+ids_wos <- which(data$C1 == "wos")
+ids_scopus <- which(data$C1 == "scopus")
+
+# Getting familiar with the format.
+
+# The format is a standardized and reduced version of APA: included are the first author, the journal has an abbreviation, year, volume, starting page, DOI.
+wos_example <- data$CR[ids_wos[1:10]]
+
+# The format is almost the normal APA format.
+scopus_example <- data$CR[ids_scopus[1:10]]
+
+# Save examples into variable.
+data2 <- data[c(ids_wos[1:4],ids_scopus[1:4]),]
+
+# The WoS format contains less information. As long as the identification of the entries is given, it is more error-free.
+# Besides, we cannot transform WoS into Scopus references due to missing information in WoS entries.
+
+
+# Goal: create a third custom format by merging both.
+```
+
+# Information extraction.
+
+Information is extracted from WoS and Scopus entries using regular expression and merged into a new format.
+
+To create a common format the necessary information is based on the content of Web of Science cited references. These include: year, first author, journal (abbreviated), volume, and starting page. If I want to merge Scopus and Web of Science (WoS), the new format can only contain these maximum information because otherwise, WoS CRs would not be transferrable. However, I exclude the journals because they can not easily be matched. The other information should be sufficient in our sample to generate fingerprints.
+
+```{r}
+
+# Function for extraction reference Information from Scopus.
+
+extract_scopus <- function(text) {
+
+  # Commas separate information in Scopus references, so the CR text is split at the commas.
+  # This creates a character vector. Generally, the first element is the first author, and the last element is the year.
+  split_content <- str_split(pattern = ",", string = text) %>% unlist()
+  
+  split_content <- trimws(split_content)
+  
+  # If the vector contains 2 or fewer elements, it means that at least two pieces of information about year, title, or first author are missing.
+  # These pieces of information are essential, so the function refuses to extract information in these cases and returns "Na".
+  if (length(split_content) < 3) {
+    return(c("Na", "Na", "Na", "Na"))
+  }
+  
+  ## Author
+  # The first element is always the first author. If it is missing, the title is used as a substitute.
+  # Remove whitespace at the beginning.
+  # Remove periods after the initials, and store the result.
+  
+  split_content[1] <- trimws(split_content[1])
+  
+  first_author <- split_content[1] %>% str_extract(pattern = "^[\\w-]+\\W+(\\w{1})")
+  
+  if (is.na(first_author)) {
+    first_author <- split_content[1] %>% str_extract(pattern = "^[\\w-]+")
+  }
+  
+  ## Year
+  # The year is always the last element. The function is designed to consider only entries with a year.
+  # Peer-reviewed literature should always have a year.
+  # Transform the year: remove "()" and keep only 4-digit numbers using regex (e.g., 2022).
+  
+  year <- split_content[length(split_content)] %>% gsub(pattern = "\\(|\\)|\\s", replacement = "")
+  year <- year %>% str_extract(pattern = "\\d{4}")
+  
+  ## Volume
+  # The volume is usually an element that contains a 1-3 digit number.
+  # It is at position -3 in the vector if there is a page number. Otherwise, it is at position -2:
+  # E1, E2, Ei, *Volume*, Page, Year
+  
+  # Store the element numbers of all elements that contain a number: possibly title, volume, page, year
+  digit_cols <- which(grepl(split_content, pattern = "\\d"))
+  
+  # If either of the last two elements contains "PP" followed by any number of digits, there is a page reference.
+  # In that case, the volume, if available, should exist before the second-to-last element with "PP" (indicating a page reference).
+  # This position is stored temporarily. Parentheses and whitespace are removed.
+  # If the element before the page reference does not contain numbers, there is no volume in the string.
+  
+  if (any(grepl(split_content[(length(split_content)-2):length(split_content)], pattern = "^PP\\..*\\d+"))) {
+    page_cols <- max(grep(split_content, pattern = "PP."))
+    volume_id <- page_cols - 1
+    
+    if (volume_id %in% digit_cols) {
+      volume <- split_content[volume_id] %>% gsub(pattern = "\\(|\\)|\\s", replacement = "")
+    } else {
+      volume <- "noVolume"
+    }
+  
+    # If there is no page reference with "PP": Find out if the second-to-last and third-to-last elements contain numbers.
+    # In that case, they could be a wrongly formatted page number and the volume.
+    # In that case, the volume is the last element with a number before the page and the year. (One could also simply choose the element -3.)
+  } else {
+    if ((length(split_content) - 1) %in% digit_cols & (length(split_content) - 2) %in% digit_cols) {
+      volume_id <- digit_cols[which.max(which(digit_cols < (length(split_content) - 1)))]
+      volume <- split_content[volume_id] %>% gsub(pattern = "\\(|\\)|\\s", replacement = "")
+      
+      # If the above condition is not met: Are there two elements with numbers in the last two elements? Then it could be year & page or year         & volume.
+      # Volume & page cannot always be clearly distinguished since both can simply be a digit.
+      # Therefore, here we simply choose the last number element before the year.
+      
+  
+      
+      # If there is only one digit, it definitely has no volume and page --> enter "noVolume".
+    } else {
+      if ((length(split_content) - 1) %in% digit_cols) {
+        volume_id <- digit_cols[which.max(which(digit_cols < length(split_content)))]
+        volume <- split_content[volume_id] %>% gsub(pattern = "\\(|\\)|\\s", replacement = "")
+      } else {
+        volume <- "noVolume"
+      }
+    }
+  }
+  
+  ## Page
+  # The page is usually contained in element -2. It typically follows the format "PP." "Starting digits" "-" "Ending digits".
+  # Sometimes, it can be just a number without the other characters, making it difficult to distinguish from the volume.
+  
+  # Is there an element in the last three elements that matches the standard format? If so, extract and store the starting page.
+  if(any(grepl(split_content[(length(split_content)-1)],pattern = "^PP."))){
+
+  starting_page <- split_content[length(split_content)-1]%>%str_extract(pattern = "\\d+")
+
+}else{
+  
+  
+  if((length(split_content)-1)%in% digit_cols&(length(split_content)-2)%in% digit_cols){
+    starting_page <- split_content[length(split_content)-1]%>%
+      str_extract(pattern = "\\d+")
+    
+  }else{
+    # If that's not the case: no page!
+    starting_page <- "noPage"
+  }
+}
+
+# Volumes are often incorrectly extracted. So here are a few checks:
+# 1. Remove "." and everything between "V" and "volume".
+#    Only digits < 2024 should remain. The oldest English journal has a volume of 371.
+#    https://en.wikipedia.org/wiki/Philosophical_Transactions_of_the_Royal_Society 
+#    De Gruyter Journal sometimes uses the year as the volume.
+
+volume <- sub(volume,pattern = "\\.",replacement = "",ignore.case = TRUE)
+volume <- sub(volume,pattern = "\\bv\\D{0,6}",replacement = "",ignore.case = TRUE)
+
+if(grepl(volume,pattern="(?=\\D)(?=\\S)",perl = TRUE)){
+  volume <- "noVolume"
+}
+
+# Extract the largest number occurring in the volume statement.
+volume_number <- (str_extract_all(volume,"\\d+")%>%unlist())[which.max(str_extract_all(volume,"\\d+")%>%unlist())]
+
+# Is it >2023? <-- Then it's noVolume
+if(!length(as.numeric(volume_number))==0){
+  if(as.numeric(volume_number)>2023){
+    volume <- "noVolume"
+  }
+}
+
+# Remove whitespace and return the result.
+return(trimws(c(year,volume,starting_page,first_author)))
+}
+
+```
+
+# Create a function that generates a custom format from the extracted information.
+# Very basic. Take all the information, separate them by *,*, and paste them together.
+
+```{R}
+# See function description.
+create_cus_format <- function(year, volume, starting_page, first_author){
+  
+  entry <- paste(first_author, year, volume, starting_page, sep = ", ")
+  
+  return(entry)  
+}
+```
+
+```{r}
+# Create a function that extracts information about the first author, publication year, starting page and volume using Regular expression.
+
+
+extract_wos <- function(text){
+
+# Split the content elements by comma into a vector.
+split_content <- text %>% strsplit(split = ",")%>%unlist()
+split_content <- trimws(split_content)
+
+##Author
+# The first author is always at position 1. If it's missing, then the title is used as a replacement.
+# Here, the first word (last name) is combined with the initials of the second word.
+# If the initials are missing, only the first word is used.
+# Also, remove whitespace at the beginning.
+
+split_content[1] <- trimws(split_content[1])
+
+author <- split_content[1]%>%str_extract(pattern = "^[\\w-]+\\W+(\\w{1})")
+
+if(is.na(author)){
+author <- split_content[1]%>%str_extract(pattern = "^[\\w-]+")}
+
+
+##Year
+# The year is always at position 2. This function only applies to articles with a valid year.
+
+year <- split_content[2]%>%gsub(pattern = "\\s*","")
+
+##Volume
+# If there is a column with a "V" followed by several digits, then it's the volume.
+# The title is not included, so there can be no misunderstandings.
+# Only the number of the volume is stored.
+
+if(any(grepl(split_content,pattern = "^V\\d+"))){
+volume_id <- min(grep(split_content,pattern = "\\bV\\d+"))
+volume <- gsub(split_content[volume_id],pattern = "V",replacement = "")
+}else{
+  
+# If that's not the case: noVolume
+volume <- "noVolume"
+}
+
+# Check volume data:
+
+volume <- sub(volume,pattern = "\\.",replacement = "",ignore.case = TRUE)
+volume <- sub(volume,pattern = "\\bv\\D{0,6}",replacement = "",ignore.case = TRUE)
+
+if(grepl(volume,pattern="(?=\\D)(?=\\S)",perl = TRUE)){
+  volume <- "noVolume"
+}
+
+# Extract the largest number occurring in the volume information.
+volume_number <- (str_extract_all(volume,"\\d+")%>%unlist())[which.max(str_extract_all(volume,"\\d+")%>%unlist())]
+
+# If this number is >2023, then noVolume
+if(!length(as.numeric(volume_number))==0){
+if(as.numeric(volume_number)>2023){
+  volume <- "noVolume"
+}}
+
+
+
+
+
+##Page
+# Each content record that has a field starting with "P" and numbers contains a starting_page.
+# It is stored as starting_page.
+if(any(grepl(split_content,pattern = "^P\\d+"))){
+page_id <- min(grep(split_content,pattern = "^P\\d+"))
+starting_page <- str_extract(split_content[page_id],pattern = "\\d+")
+}else{
+  
+# If that's not the case: noPage
+starting_page <- "noPage"
+}
+
+# The obtained information is returned as a vector,
+# after removing leading and trailing whitespace.
+return(trimws(c(year,volume,starting_page,author)))
+}
+
+```
+# Looping thorugh the data, unsing the defined functions to extract information.
+## If Volume and Page are missing the entrie is skipped.
+## The same apllies if the publication Year is missing.
+
+```{r}
+# Create a new, empty column for the new references.
+data_streng <- data
+data_streng$CR_new <- 0
+
+# For each article:
+for(i in 1:nrow(data_streng)){
+  
+  # Extract and split the references.
+  crs <- strsplit(data_streng$CR[i], split = ";") %>% unlist()
+  
+  # If no references are present, skip.
+  if(!any(!is.na(crs))){
+    next
+  }
+  
+  # Mark those that do not contain a date, depending on the WoS or Scopus format.
+  if(data$C1[i] == "wos"){
+    contains_date <- grepl(crs, pattern = " \\d{4},")
+  } else{
+    contains_date <- grepl(crs, pattern = "\\(\\d{4}\\)")
+  }
+  
+  crs_no_date <- crs[!contains_date]
+  crs_date <- crs[contains_date]
+  
+  if(data$C1[i] == "wos"){
+    crs_extracted <- sapply(crs_date, extract_wos) %>% t()
+  } else{
+    crs_extracted <- sapply(crs_date, extract_scopus) %>% t()
+  }
+  
+  tmp_vec <- c()
+  for(z in 1:nrow(crs_extracted)){
+   
+   ## validate results
+   
+   values <- crs_extracted[z,] %>% c()
+   values <- trimws(values)
+   
+   # Missing author or NA excluded. Otherwise, it will be skipped.
+   if(is.na(values[4]) | values[4] == "ANONYMOUS" | values[4] == "Na" | values[4] == ""){
+     next
+   } else if(grepl(values[4], pattern = "\\d")){
+     next
+   } else if(grepl(values[4], pattern = "^\\w+")){
+     
+     if(nchar(str_extract(values[4], pattern = "^\\w+")) <= 1){
+       next
+     }
+   } else{
+     next
+   }
+   
+   # Year must be >1665 & <2024. Otherwise, it will be skipped.
+   if(is.na(values[1]) | values[1] == "") {
+      next
+   } else if(!grepl(values[1], pattern = "\\D+")) {
+      if(as.numeric(values[1]) < 1665 | as.numeric(values[1]) > 2023){
+         next
+      }
+   }
+   
+   # Page numbers can only contain digits.
+   if(grepl(values[3], pattern = "\\D+")){
+     values[3] <- "noPage"
+   }
+   
+   # Remove leading zeros.
+   # Page
+   values[3] <- sub(values[3], pattern = "^0", replacement = "")
+   
+   # Volume
+   values[2] <- sub(values[2], pattern = "^0", replacement = "")
+   
+   if(is.na(values[3])){
+     values[3] <- "noPage"
+   }
+   
+   if(values[2] == "noVolume" & values[3] == "noPage"){
+     next
+   }
+   # Create the new formate for the reference and append it to the articles new references.
+   tmp_vec <- append(tmp_vec, create_cus_format(year = values[1], volume = values[2], starting_page = values[3], first_author = values[4]))
+
+   if(is.na(values[4])){
+     cat(i)
+   }
+ }
+ 
+# Stich togehter the refernce vector using ";" as a seperator.
+crs_new <- paste(tmp_vec, collapse = ";")
+
+ data_streng$CR_new[i] <- crs_new
+}
+
+```
+
+# Check the Resuluts
+
+```{r}
+# Unlist reference string
+crs_new_sep_streng <- data_streng$CR_new%>%str_split(pattern = ";")%>%unlist()
+
+which(crs_new_sep_streng==0)
+
+# No missing values
+nas <- grepl(pattern = "Na,",crs_new_sep_streng)
+
+length(which(nas))/length(crs_new_sep_streng)
+
+
+noPages <- grepl(pattern = "noPage",crs_new_sep_streng)
+
+length(which(noPages))/length(crs_new_sep_streng)
+# 10.26% have no page indication
+
+noVolume <- grepl(pattern = "noVolume",crs_new_sep_streng)
+
+length(which(noVolume))/length(crs_new_sep_streng)
+# 28.09% have no volume indication
+
+
+
+length(which(noPages&noVolume))/length(crs_new_sep_streng)
+# 0
+
+
+cr_sample_streng <- crs_new_sep_streng
+
+matches <- (length(which(table(cr_sample_streng)>=2))/length(crs_new_sep_streng))*100
+# 7.76%
+```
+
+# Save the results
+
+```{r}
+#save(data_streng, file="data_new_crs.Rdata")
+```
+
