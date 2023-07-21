@@ -1,0 +1,346 @@
+# Script for conducting the network analysis. Because the clustering algorithm is stochastic, please load the used workspace if you want to replicate the exact clustering solution and paper selection.
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+set.seed(123)
+```
+
+
+
+# Load packages:
+
+```{r}
+library(pacman)
+p_load(
+  tidyverse,
+  bibliometrix,
+  psych,
+  stringr,
+  igraph,
+  network,
+  intergraph,
+  GGally, 
+  ggraph
+)
+# If not installed, run 'install.packages("sna")' but do not load the package
+
+```
+
+
+# Load data
+
+```{r}
+# To start the process from scrath remove the '#' in the follwoing line and comment out 'load("network_analysis_workspace.RData")' below.
+# load("data_new_crs.Rdata")
+
+
+load("network_analysis_workspace.RData")
+# To see our results,load the provided workspace.
+# Overwrite old references with the newly created ones to comply with bibliometrix format.
+
+
+data_streng$CR <- data_streng$CR_new  
+```
+
+
+# Create networks:
+
+```{r}
+strenges_netzwerk <-
+  biblioNetwork(data_streng, analysis = "coupling", network = "references")
+# Basic refrence network is created using the bibliometric coupling method.
+```
+
+# Create network plot:
+
+```{r}
+# Extract the igraph object from the bibliometrix plot object.
+g <-
+  networkPlot(strenges_netzwerk, cluster = "none", weighted = TRUE)$graph
+
+# Identify and remove isolated nodes.
+isolated <- which(igraph::degree(g) == 0)
+g2 <- igraph::delete.vertices(g, isolated)
+
+data_streng_cleaned <- data_streng[-c(isolated), ]
+
+
+# Check: how many nodes were removed
+((as_adjacency_matrix(g) %>% as.matrix() %>% colSums()) <= 0) %>% which() %>% length()
+# 63 isolated vertices
+
+# 362 - 63 = 299 vertices remain, the isolated vertices were removed.
+
+# Visual inspection, selection was successful.
+plot(g2, layout = layout_with_fr(g2))
+```
+
+# Subnetwork division
+Creating subgraphs for all found and included clusters. None were exluded.
+```{r}
+
+
+# Identify communities in the graph
+comm_content <- communities(multilevel.community(g2))
+
+# Filter communities with more than 20 nodes
+comm_content <-
+  comm_content[which((lapply(comm_content, length) %>% unlist()) >= 20)]
+
+# Create subgraphs for each community
+sub1 <- subgraph(g2, comm_content[1] %>% unlist())
+sub2 <- subgraph(g2, comm_content[2] %>% unlist())
+sub3 <- subgraph(g2, comm_content[3] %>% unlist())
+sub4 <- subgraph(g2, comm_content[4] %>% unlist())
+sub5 <- subgraph(g2, comm_content[5] %>% unlist())
+
+# Store the subgraphs in a list
+subs <- list(sub1, sub2, sub3, sub4, sub5)
+```
+
+
+# Selecting each cluster's top papers.
+
+```{r}
+# Determine the number of papers to select based on 10% of each community size
+n_paper <- (mapply(comm_content, FUN = length) * 0.10) %>% round()
+
+# Initialize a list to store relevant papers
+rel_papers <- list()
+
+# Iterate over each subgraph
+for (i in 1:5) {
+  # Compute strenght in the subgraph and sort in descending order
+  degrees <-
+    strength(subs[[i]])[strength(subs[[i]]) %>% order(decreasing = TRUE)]
+  
+  # Select top n_paper[i] papers based on strength
+  papers <- degrees[1:n_paper[i]] %>% names() %>% list()
+  
+  # Append selected papers to the list
+  rel_papers <- append(rel_papers, papers)
+}
+
+# Total number of selected papers
+sum(n_paper)
+
+# Relevant papers selected in each cluster
+rel_papers
+# top 10%: a total of 30 papers
+
+
+# Additionally identify the top 10% papers disregarding cluster-structure:
+# Select the top 30 papers based on overall graph node strength outside of clusters.
+top30 <-
+  strength(g2)[strength(g2) %>% order(decreasing = TRUE)][1:30] %>% names()
+
+# Extract paper names in each subgraph
+namevector <- mapply(
+  subs,
+  FUN = function(x)
+    V(x)$name
+) %>% unlist()
+
+incl_name_vec <- rel_papers %>% unlist()
+
+# Add wang d to the list of by in-cluster strength included papers,
+# because there was a duplication of an articly by chong in cluster 5 and so one more paper can be included.
+incl_name_vec <- append(incl_name_vec, "wang d, 2021-1")
+
+# Identify the papers in the top 30 that were not already included in the clustering selection procedure
+tmp <- top30[(!(top30 %in% incl_name_vec)) %>% which()]
+
+# Find the corresponding node IDs in the original graph
+
+# Papers that were included by main graph strength, that were not selected by cluster strength
+tmp_ids <- mapply(
+  tmp,
+  FUN = function(x)
+    which(V(g2)$name == x)
+)
+
+# Papers that were included trough the cluster specific strength selection process
+# Caution: the variable name is misleading, because top30_ids refers to the ids of papers included through the in-cluster selection procedure
+
+top30_ids <-
+  mapply(
+    incl_name_vec,
+    FUN = function(x)
+      which(V(g2)$name == x)
+  )
+
+# Marks if Papers were included and if they were included based on cluster strength or main graph strength
+V(g2)$included <- NA
+V(g2)$included[top30_ids] <- 1
+V(g2)$included[tmp_ids] <- 2
+
+# Assign community memberships to nodes in the graph based on the calculated solution
+cluster <- multilevel.community(g2)
+cluster$membership <- rep(9, 299)
+
+cluster$membership[V(g2)$name %in% V(sub1)$name] <- 1
+cluster$membership[V(g2)$name %in% V(sub2)$name] <- 2
+cluster$membership[V(g2)$name %in% V(sub3)$name] <- 3
+cluster$membership[V(g2)$name %in% V(sub4)$name] <- 4
+cluster$membership[V(g2)$name %in% V(sub5)$name] <- 5
+
+# Find the community membership for the top papers selected outside of clusters
+cluster$membership[tmp_ids]
+
+# Show the paper names and their corrosponding community membership
+cbind(tmp, cluster$membership[tmp_ids])
+```
+
+# Calculating Network metrics
+```{r}
+
+
+# Compute the average strength of the top 6 nodes in sub1
+strength(sub1)[order(strength(sub1), decreasing = TRUE)][1:6] %>% mean()
+## 391
+
+strength(sub1)[order(strength(sub1), decreasing = TRUE)][1:6]
+
+# Compute the average strength of the top 6 nodes in sub2
+strength(sub2)[order(strength(sub2), decreasing = TRUE)][1:6] %>% mean()
+## 217
+
+strength(sub2)[order(strength(sub2), decreasing = TRUE)][1:6]
+
+# Compute the average strength of the top 6 nodes in sub3
+strength(sub3)[order(strength(sub3), decreasing = TRUE)][1:6] %>% mean()
+## 405
+
+strength(sub3)[order(strength(sub3), decreasing = TRUE)][1:6]
+
+# Compute the average strength of the top 8 nodes in sub4
+strength(sub4)[order(strength(sub4), decreasing = TRUE)][1:8] %>% mean()
+## 273
+
+strength(sub4)[order(strength(sub4), decreasing = TRUE)][1:8]
+
+# Compute the average strength of the top 5 nodes in sub5
+strength(sub5)[order(strength(sub5), decreasing = TRUE)][1:6] %>% mean()
+## 188
+
+strength(sub5)[order(strength(sub5), decreasing = TRUE)][1:6]
+
+# Compute the average strength of the 10% papers not included through sub-graph strength.
+strength(g2)[tmp_ids] %>% mean()
+## 568
+
+# Network description
+bibliometrix::networkStat(g2)
+
+# Calculate Modularity of the clustering solution
+modularity(g2, membership = membership(comm_content))
+
+# Modularity = 0.36
+
+# Average degree
+degree(g2) %>% mean()
+# 17.43813
+
+# Average weighted degree
+strength(g2) %>% mean()
+# 200.55
+
+# create a random Graph of the same size
+random_graph <- sample_gnm(n = 299, m = 2607)
+
+#Calculate transitivity for the real and random networks
+transitivity(random_graph)
+transitivity(g2)
+
+```
+
+# Create a network plot
+## Pre-Processing
+```{r}
+
+
+
+
+V(g2)$community <- cluster$membership
+
+
+# Enumare Nodes
+V(g2)$label <- 1:299
+
+# Set edge width and color
+E(g2)$color <- "#BEBEBE"
+E(g2)$width <- 1
+
+# Compute node strength
+degree_g2 <- strength(g2)
+
+# Adjust node size based on strength
+V(g2)$size <- (1 + (1.7 * degree_g2 / max(degree_g2)) ^ 2.5)
+
+# Remove the nodes 258 & 259 because they are only connected to each other and
+# would distort the graph
+
+exclude_nodes <- c("258", "259")
+g2_filtered <-
+  delete_vertices(g2, V(g2)[V(g2)$label %in% exclude_nodes])
+
+# Only keep the included nodes number-label, discarding all the others.
+included_ids_tmp <-
+  which(!is.na(V(g2_filtered)$included) & V(g2_filtered)$included == 1)
+included_ids_top30 <-
+  which(!is.na(V(g2_filtered)$included) & V(g2_filtered)$included == 2)
+
+V(g2_filtered)$label_tmp <- V(g2_filtered)$label
+V(g2_filtered)$label_top30 <- V(g2_filtered)$label
+
+V(g2_filtered)$label_tmp[-included_ids_tmp] <- NA
+V(g2_filtered)$label_top30[-included_ids_top30] <- NA
+```
+
+## Generate the Plot using GGallys ggnet2
+```{r}
+
+plot <-
+  GGally::ggnet2(
+    g2_filtered,
+    color = "community",
+    size = 0,
+    palette = "Set1",
+    mode = "kamadakawai",
+    edge.color = c("color", "grey50"),
+    edge.alpha = .7
+  ) +
+  geom_point(aes(color = color),
+             size = (V(g2_filtered)$size) * 1.7,
+             alpha = .9) +
+  geom_text(
+    aes(label = V(g2_filtered)$label_tmp),
+    color = "black",
+    size = min(V(g2_filtered)$size[tmp_ids] * 2 - 0.7),
+    fontface = "bold"
+  ) +
+  geom_text(
+    aes(label = V(g2_filtered)$label_top30),
+    color = "cornsilk1",
+    size = min(V(g2_filtered)$size[tmp_ids] * 2 - 0.7),
+    fontface = "bold"
+  ) +
+  guides(size = "none", color = "none")
+  
+
+# ggsave(paste0("graph_new",Sys.time()%>%as.numeric()%>%round(),".png"),plot,dpi=300)
+
+```
+
+
+```{r}
+# Print out the paper ids included in the review.
+cbind(names(V(g2_filtered)[!is.na(V(g2_filtered)$label_tmp)]), na.omit(V(g2_filtered)$label_tmp)) %>%
+  as.data.frame()
+
+cbind(names(V(g2_filtered)[!is.na(V(g2_filtered)$label_top30)]), na.omit(V(g2_filtered)$label_top30)) %>%
+  as.data.frame()
+```
+
+
