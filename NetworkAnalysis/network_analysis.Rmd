@@ -1,6 +1,6 @@
 # Script for conducting the network analysis. Because the clustering algorithm is stochastic, please load the used workspace if you want to replicate the exact clustering solution and paper selection.
 
-
+## Contents: Network generation: line 49+, Paper selection: 105, Metrics: 195, Plot: 301
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 set.seed(123)
@@ -44,7 +44,7 @@ data_streng$CR <- data_streng$CR_new
 ```
 
 
-# Create networks:
+# Create network:
 
 ```{r}
 strenges_netzwerk <-
