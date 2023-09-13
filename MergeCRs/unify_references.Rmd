@@ -1,4 +1,4 @@
-# Script for standardizing the Cited References from Scopus and WoS into a new format.
+# Script for standardizing the cited references from Scopus and WoS into a new format.This is necessary because WoS and Scopus use different formats.
 
 ## Load Packages
 ```{r}
@@ -23,27 +23,27 @@ data_selected_deduped <- NULL
 # Determine Basic Metrics
 ```{r}
 data$C1 %>% table()
-# There are almost equal numbers of articles from WoS and Scopus. Formatting is therefore extremely important.
+# There are almost an equal number of articles from WoS and Scopus. Formatting is therefore extremely important.
 
 ids_wos <- which(data$C1 == "wos")
 ids_scopus <- which(data$C1 == "scopus")
 
-# Getting familiar with the format.
+# Inspecting the format of the cited reference documentation.
 
-# The format is a standardized and reduced version of APA: included are the first author, the journal has an abbreviation, year, volume, starting page, DOI.
+# The WoS format is a standardized and reduced version of APA: included are the first author, the journal is abbreviated, year, volume, starting page, DOI.
 wos_example <- data$CR[ids_wos[1:10]]
 
-# The format is almost the normal APA format.
+# The Scopus format is almost the normal APA format w/o journal abbreviations.
 scopus_example <- data$CR[ids_scopus[1:10]]
 
-# Save examples into variable.
+# Save examples into a variable for futher testing.
 data2 <- data[c(ids_wos[1:4],ids_scopus[1:4]),]
 
-# The WoS format contains less information. As long as the identification of the entries is given, it is more error-free.
+# The WoS format contains less information. As long as entries are uniquely identifiable, it is less error-prone.
 # Besides, we cannot transform WoS into Scopus references due to missing information in WoS entries.
 
 
-# Goal: create a third custom format by merging both.
+# Thus the Goal is to create a third custom format by merging both.
 ```
 
 # Information extraction.
@@ -163,7 +163,7 @@ extract_scopus <- function(text) {
 
 # Volumes are often incorrectly extracted. So here are a few checks:
 # 1. Remove "." and everything between "V" and "volume".
-#    Only digits < 2024 should remain. The oldest English journal has a volume of 371.
+#    Only digits < 2024 should remain. The oldest journal has a volume of 371.
 #    https://en.wikipedia.org/wiki/Philosophical_Transactions_of_the_Royal_Society 
 #    De Gruyter Journal sometimes uses the year as the volume.
 
@@ -194,7 +194,7 @@ return(trimws(c(year,volume,starting_page,first_author)))
 # Very basic. Take all the information, separate them by *,*, and paste them together.
 
 ```{R}
-# See function description.
+# See function description above.
 create_cus_format <- function(year, volume, starting_page, first_author){
   
   entry <- paste(first_author, year, volume, starting_page, sep = ", ")
@@ -204,16 +204,16 @@ create_cus_format <- function(year, volume, starting_page, first_author){
 ```
 
 ```{r}
-# Create a function that extracts information about the first author, publication year, starting page and volume using Regular expression.
+# Create a function that extracts information about the first author, publication year, starting page and volume using Regular expression from WoS cited references.
 
 
 extract_wos <- function(text){
 
-# Split the content elements by comma into a vector.
+# Split the content elements by comma into a vector and remove white space.
 split_content <- text %>% strsplit(split = ",")%>%unlist()
 split_content <- trimws(split_content)
 
-##Author
+## Author
 # The first author is always at position 1. If it's missing, then the title is used as a replacement.
 # Here, the first word (last name) is combined with the initials of the second word.
 # If the initials are missing, only the first word is used.
@@ -330,7 +330,7 @@ for(i in 1:nrow(data_streng)){
    values <- crs_extracted[z,] %>% c()
    values <- trimws(values)
    
-   # Missing author or NA excluded. Otherwise, it will be skipped.
+   # Missing author or NA are excluded. Otherwise, it will be skipped.
    if(is.na(values[4]) | values[4] == "ANONYMOUS" | values[4] == "Na" | values[4] == ""){
      next
    } else if(grepl(values[4], pattern = "\\d")){
