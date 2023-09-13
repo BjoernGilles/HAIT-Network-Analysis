@@ -48,7 +48,7 @@ The purpose of this section is to filter the  merged bibliometrixdf, so that onl
 Furthermore we always use the information from WoS in case of data being available from both WoS and Scopus, as the entries are more standardized. 
 
 ```{r}
-# Creating an index for each column in the merged bibliodf. 0 = not included. 1 = included by us.
+# Creating an index for each column in the merged bibliodf. 0 = not included. 1 = included by us in the screening.
 
 index <- c()
 
