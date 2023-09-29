@@ -1,5 +1,5 @@
 # HAIT-Network-Analysis
-# R-Scripts used in the ublication "Defining Human-AI Teaming the Human-Centered Way: A Scoping Review and Network Analysis" (doi: 10.3389/frai.2023.1250725)
+# R-Scripts used in the publication "Defining Human-AI Teaming the Human-Centered Way: A Scoping Review and Network Analysis" (doi: 10.3389/frai.2023.1250725)
 
 This repository contains several R markdown notebooks that were used to produce the publication.
 To replicate the workflow, run the notebooks listed below in the correct order, chunk by chunk. If random processes or longer processing times are involved, our R workspace is also provided.
